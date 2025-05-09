@@ -2,7 +2,7 @@ name: IceRaven OLED Auto-Release
 
 on:
   schedule:
-    - cron: "00 0 * * *"
+    - cron: '00 0 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -33,8 +33,8 @@ jobs:
           tag_exists=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/${{ github.repository }}/tags" \
             | jq -r --arg tag "${{ steps.get_upstream.outputs.tag }}" \
-            'any(.[].name == $tag; .)')
-
+            'any(.name == $tag; .)')
+          
           # Set output based on tag existence
           if [[ "$tag_exists" == "true" ]]; then
             echo "new_version=false" >> $GITHUB_OUTPUT
