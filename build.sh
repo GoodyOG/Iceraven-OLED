@@ -1,9 +1,9 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 # Decompile with Apktool (decode resources + classes)
-wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.11.0/apktool_2.11.0.jar -O apktool.jar
+wget -q https://github.com/iBotPeaches/Apktool/releases/download/v2.11.0/apktool_2.11.0.jar -O apktool.jar || { echo "Failed to download apktool"; exit 1; }
 java -jar apktool.jar d iceraven.apk -o iceraven-patched  # -s flag removed
 rm -rf iceraven-patched/META-INF
 
@@ -20,8 +20,18 @@ sed -i 's/ff52525e/ff15141a/g' iceraven-patched/smali_classes2/mozilla/component
 # Recompile the APK
 java -jar apktool.jar b iceraven-patched -o iceraven-patched.apk --use-aapt2
 
+# Check zipalign is available
+command -v zipalign >/dev/null 2>&1 || { echo "zipalign not found. Install it with: sudo apt install zipalign"; exit 1; }
+
 # Align and sign the APK
 zipalign 4 iceraven-patched.apk iceraven-patched-signed.apk
 
+# Verify APK was created
+if [ ! -f iceraven-patched-signed.apk ]; then
+    echo "Error: iceraven-patched-signed.apk was not created"
+    exit 1
+fi
+echo "APK verification passed: iceraven-patched-signed.apk exists"
+
 # Clean up
-rm -rf iceraven-patched iceraven-patch ed.apk
+rm -rf iceraven-patched iceraven-patched.apk iceraven-patched-signed.apk iceraven.apk

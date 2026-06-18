@@ -51,15 +51,19 @@ jobs:
         run: |
           UPSTREAM_VERSION="${{ steps.get_upstream_release.outputs.ICERAVEN_VERSION }}"
           THIS_REPO_VERSION="${{ steps.this_repo_latest_release.outputs.tag_name }}"
+          LATEST_RELEASE_URL="${{ steps.get_upstream_release.outputs.LATEST_RELEASE }}"
 
           echo "Upstream IceRaven version: $UPSTREAM_VERSION"
           echo "This repository's latest release version: ${THIS_REPO_VERSION:-"No previous release found."}"
 
-          if [ "$UPSTREAM_VERSION" != "$THIS_REPO_VERSION" ]; then
-            echo "::set-output name=NEW_VERSION_AVAILABLE::true"
+          if [ -z "$UPSTREAM_VERSION" ] || [ -z "$LATEST_RELEASE_URL" ]; then
+            echo "NEW_VERSION_AVAILABLE=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream version or release URL is empty. Skipping build."
+          elif [ "$UPSTREAM_VERSION" != "$THIS_REPO_VERSION" ]; then
+            echo "NEW_VERSION_AVAILABLE=true" >> "$GITHUB_OUTPUT"
             echo "New version available! Building and releasing."
           else
-            echo "::set-output name=NEW_VERSION_AVAILABLE::false"
+            echo "NEW_VERSION_AVAILABLE=false" >> "$GITHUB_OUTPUT"
             echo "No new version from upstream. Skipping build and release."
           fi
       
@@ -88,7 +92,7 @@ jobs:
         id: create_release
         # The condition now directly uses the output from the version_check step
         if: steps.version_check.outputs.NEW_VERSION_AVAILABLE == 'true'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         with:
