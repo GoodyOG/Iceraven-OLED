@@ -5,6 +5,9 @@ on:
     - cron: '00 0 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
@@ -13,91 +16,95 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      # --- NEW STEP: Get latest release info from THIS repository ---
       - name: Get latest release info from this repo
         id: this_repo_latest_release
         uses: cardinalby/git-get-release-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           latest: true
-          # Optional: You might want to specify a repository if it's not the current one,
-          # but for checking your own repo, 'owner/repo' isn't usually needed.
-          # If this action ever fails to find a release, its outputs will be empty.
-      # ----------------------------------------------------------------
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt install -y wget apktool zipalign apksigner jq openjdk-17-jdk
+          sudo apt-get update
+          sudo apt-get install -y wget zipalign apksigner jq
+
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v6
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
-      - name: Get Latest IceRaven ARM64 Release (Upstream)
+
+      - name: Get latest upstream ARM64 release
         id: get_upstream_release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          LATEST_RELEASE=$(jq -r '.assets[] | select(.name | contains("arm64") and contains("forkRelease.apk")) | .browser_download_url' < <(curl -s https://api.github.com/repos/fork-maintainers/iceraven-browser/releases/latest))
-          echo "LATEST_RELEASE=$LATEST_RELEASE" >> $GITHUB_OUTPUT
-          ICERAVEN_VERSION=$(echo "$LATEST_RELEASE" | sed -E 's/.*iceraven-(.*)-browser.*/\1/')
-          echo "ICERAVEN_VERSION=$ICERAVEN_VERSION" >> $GITHUB_OUTPUT
-          echo "Current upstream IceRaven version: $ICERAVEN_VERSION"
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            https://api.github.com/repos/fork-maintainers/iceraven-browser/releases/latest \
+            -o upstream-release.json
+          url=$(jq -er '[.assets[] | select(.name | endswith("arm64-v8a.apk")) | .browser_download_url] | first' upstream-release.json)
+          version=$(jq -er '.tag_name | sub("^iceraven-"; "")' upstream-release.json)
+          echo "LATEST_RELEASE=$url" >> "$GITHUB_OUTPUT"
+          echo "ICERAVEN_VERSION=$version" >> "$GITHUB_OUTPUT"
+          echo "Current upstream IceRaven version: $version"
 
       - name: Check if new version is available
         id: version_check
+        env:
+          UPSTREAM_VERSION: ${{ steps.get_upstream_release.outputs.ICERAVEN_VERSION }}
+          THIS_REPO_VERSION: ${{ steps.this_repo_latest_release.outputs.tag_name }}
         run: |
-          UPSTREAM_VERSION="${{ steps.get_upstream_release.outputs.ICERAVEN_VERSION }}"
-          THIS_REPO_VERSION="${{ steps.this_repo_latest_release.outputs.tag_name }}"
-
-          echo "Upstream IceRaven version: $UPSTREAM_VERSION"
-          echo "This repository's latest release version: ${THIS_REPO_VERSION:-"No previous release found."}"
-
           if [ "$UPSTREAM_VERSION" != "$THIS_REPO_VERSION" ]; then
-            echo "::set-output name=NEW_VERSION_AVAILABLE::true"
-            echo "New version available! Building and releasing."
+            echo 'NEW_VERSION_AVAILABLE=true' >> "$GITHUB_OUTPUT"
+            echo 'New version available; building and releasing.'
           else
-            echo "::set-output name=NEW_VERSION_AVAILABLE::false"
-            echo "No new version from upstream. Skipping build and release."
+            echo 'NEW_VERSION_AVAILABLE=false' >> "$GITHUB_OUTPUT"
+            echo 'No new version from upstream.'
           fi
-      
-      # --- Conditional steps based on version_check ---
-      - name: Download Latest APK
+
+      - name: Download latest APK
         if: steps.version_check.outputs.NEW_VERSION_AVAILABLE == 'true'
-        run: |
-          wget -q "${{ steps.get_upstream_release.outputs.LATEST_RELEASE }}" -O iceraven.apk
-      - name: Run Build Script
+        env:
+          APK_URL: ${{ steps.get_upstream_release.outputs.LATEST_RELEASE }}
+        run: curl --fail --location --retry 3 "$APK_URL" -o iceraven.apk
+
+      - name: Run build script
         if: steps.version_check.outputs.NEW_VERSION_AVAILABLE == 'true'
         run: bash build.sh
+
       - name: Sign APK
         if: steps.version_check.outputs.NEW_VERSION_AVAILABLE == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE }}
+          KEYSTORE_PASSPHRASE: ${{ secrets.KEYSTORE_PASSPHRASE }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "${{ secrets.KEYSTORE }}" | base64 -di > keystore.jks
-          apksigner sign --ks keystore.jks --ks-pass pass:${{ secrets.KEYSTORE_PASSPHRASE }} --key-pass pass:${{ secrets.KEY_PASSWORD }} iceraven-patched-signed.apk
-      - name: Upload APK as Artifact
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > keystore.jks
+          apksigner sign --ks keystore.jks --ks-pass env:KEYSTORE_PASSPHRASE --key-pass env:KEY_PASSWORD iceraven-patched-signed.apk
+          apksigner verify --verbose iceraven-patched-signed.apk
+
+      - name: Upload APK as artifact
         if: steps.version_check.outputs.NEW_VERSION_AVAILABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: iceraven-dark-apk
           path: iceraven-patched-signed.apk
-      # -------------------------------------------------
 
-      - name: Create Release
-        id: create_release
-        # The condition now directly uses the output from the version_check step
+      - name: Create release
         if: steps.version_check.outputs.NEW_VERSION_AVAILABLE == 'true'
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.get_upstream_release.outputs.ICERAVEN_VERSION }}
           name: IceRaven Dark Theme ${{ steps.get_upstream_release.outputs.ICERAVEN_VERSION }}
           body: |
             Automatic release of IceRaven Dark Theme based on upstream version ${{ steps.get_upstream_release.outputs.ICERAVEN_VERSION }}.
-            
+
             This APK is automatically built and patched for a dark theme.
           files: iceraven-patched-signed.apk
 
-      # Removed the second "Get latest release info" step, as it's now handled upfront.
