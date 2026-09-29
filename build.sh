@@ -78,6 +78,20 @@ find iceraven-patched -path '*/org/mozilla/geckoview/GeckoView.smali' -exec sed 
 find iceraven-patched -path '*/mozilla/components/browser/engine/gecko/GeckoEngineView.smali' -exec sed -i 's/-0xd5d5d2/-0x1000000/g' {} +
 echo "[OLED] GeckoView loading background -> black"
 
+# ============================================================
+# TAB BAR (tab strip) + STATUS BAR OLED
+# ============================================================
+AGS=$(find iceraven-patched -path '*/mozilla/components/compose/base/theme/AcornGradientSchemeKt.smali' | head -n1)
+if [ -n "$AGS" ]; then
+  sed -i -E 's#sget-wide ([vp][0-9]+), Lmozilla/components/ui/colors/NovaColors;->(VioletDesaturated90A40|Orange70A50|VioletDesaturated80|Violet10A50|Orange10A50):J#const-wide \1, 0xff000000L#' "$AGS"
+  if grep -q 'NovaColors;->\(VioletDesaturated90A40\|Orange70A50\|VioletDesaturated80\|Violet10A50\|Orange10A50\):J' "$AGS"; then
+    echo "[OLED] WARN: accentSubtle colors not fully patched: $AGS"
+  else
+    echo "[OLED] tab bar + status bar (accentSubtle) -> black"
+  fi
+fi
+# ============================================================
+
 # Recompile the APK
 java -jar apktool.jar b iceraven-patched -o iceraven-patched.apk --use-aapt2
 
