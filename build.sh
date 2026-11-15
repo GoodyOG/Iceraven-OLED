@@ -92,57 +92,8 @@ if [ -n "$AGS" ]; then
 fi
 # ============================================================
 
-# ============================================================
-# REPAIR DANGLING LIBRARY ATTRIBUTES
-# Upstream 2.53.0+ ships Glance widget layouts that reference
-# app:glance_isTopLevelLayout while the attribute declaration is absent from
-# resources.arsc. Android ignores it at runtime; aapt2 refuses to link it
-# ("error: attribute glance_isTopLevelLayout not found"). Declare anything
-# used-but-undeclared before recompiling.
-# ============================================================
-python3 - iceraven-patched/res <<'PYATTR'
-import os, re, sys
-
-res = sys.argv[1]
-values = os.path.join(res, "values")
-attrs = os.path.join(values, "attrs.xml")
-RES_AUTO = "http://schemas.android.com/apk/res-auto"
-
-
-def read(path):
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        return fh.read()
-
-
-declared = set()
-if os.path.isdir(values):
-    for fn in os.listdir(values):
-        if fn.endswith(".xml"):
-            declared |= set(re.findall(r'<attr\s+name="([^"]+)"', read(os.path.join(values, fn))))
-
-used = set()
-for dirpath, _, files in os.walk(res):
-    for fn in files:
-        if not fn.endswith(".xml"):
-            continue
-        text = read(os.path.join(dirpath, fn))
-        prefixes = set(re.findall(r'xmlns:(\w+)="%s"' % re.escape(RES_AUTO), text))
-        if prefixes:
-            used |= {n for pre, n in re.findall(r'(?<![\w:.-])(\w+):([\w.]+)\s*=', text) if pre in prefixes}
-        used |= set(re.findall(r'\?attr/([A-Za-z_][\w.]*)', text))
-
-missing = sorted(used - declared)
-if not missing:
-    print("[FIX] all referenced res-auto attributes are declared")
-elif not os.path.exists(attrs):
-    print("[FIX] no attrs.xml to patch; leaving resources untouched")
-else:
-    text = read(attrs)
-    inject = "".join('    <attr name="%s" />\n' % name for name in missing)
-    with open(attrs, "w", encoding="utf-8") as fh:
-        fh.write(text.replace("</resources>", inject + "</resources>"))
-    print("[FIX] declared %d missing attribute(s): %s" % (len(missing), ", ".join(missing)))
-PYATTR
+# Strip undeclared Glance attribute (upstream 2.53.0) so aapt2 can link
+find iceraven-patched/res -name 'glance_*.xml' -exec sed -i 's/ app:glance_isTopLevelLayout="[^"]*"//' {} +
 
 # Recompile the APK
 java -jar apktool.jar b iceraven-patched -o iceraven-patched.apk --use-aapt2
