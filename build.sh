@@ -92,6 +92,16 @@ if [ -n "$AGS" ]; then
 fi
 # ============================================================
 
+# ============================================================
+# REPAIR DANGLING LIBRARY ATTRIBUTES
+# Upstream 2.53.0+ ships Glance widget layouts that reference
+# app:glance_isTopLevelLayout while the attribute declaration is absent from
+# resources.arsc. Android ignores it at runtime; aapt2 refuses to link it
+# ("error: attribute glance_isTopLevelLayout not found"). Declare anything
+# used-but-undeclared before recompiling.
+# ============================================================
+python3 "$(dirname "$0")/scripts/fix-declared-attrs.py" iceraven-patched/res
+
 # Recompile the APK
 java -jar apktool.jar b iceraven-patched -o iceraven-patched.apk --use-aapt2
 
